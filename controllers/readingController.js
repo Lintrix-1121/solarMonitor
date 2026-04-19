@@ -5,94 +5,93 @@ const { evaluatedRules } = require('./alertController')
 
 const readingController = {
   // Create new reading (from ESP32)
-  async createReading(req, res, next) {
+async createReading(req, res, next) {
+  try {
+    const data = req.body;
+
+    if (!data.device_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'device_id is required'
+      });
+    }
+
+    let reading;
+    const transaction = await SensorReading.sequelize.transaction();
+
+    //Database operations 
     try {
-      const data = req.body;
-      
-      // Validate required fields
-      if (!data.device_id) {
-        return res.status(400).json({
-          success: false,
-          message: 'device_id is required'
-        });
-      }
+      // Update or create device
+      await Device.findOrCreate({
+        where: { device_id: data.device_id },
+        defaults: {
+          location: data.location || null,
+          mac_address: data.mac_address || null,
+          last_seen: new Date()
+        },
+        transaction
+      });
 
-      // Start transaction
-      const transaction = await SensorReading.sequelize.transaction();
+      //Create main sensor reading
+      reading = await SensorReading.create({
+        device_id: data.device_id,
+        panel_irradiance: data.panel_irradiance,
+        space_irradiance: data.space_irradiance,
+        dust_factor: data.dust_factor,
+        full_spectrum_panel: data.full_spectrum_panel,
+        full_spectrum_space: data.full_spectrum_space,
+        ir_panel: data.ir_panel,
+        ir_space: data.ir_space,
+        current: data.current,
+        voltage: data.voltage,
+        power: data.power,
+        crack_indicator: data.crack_indicator,
+        shading_variation: data.shading_variation,
+        efficiency: data.efficiency,
+        rssi: data.rssi,
+        uptime_hours: data.uptime_hours,
+        device_timestamp: data.timestamp_ms
+      }, { transaction });
 
-      try {
-        // Update or create device
-        await Device.findOrCreate({
-          where: { device_id: data.device_id },
-          defaults: {
-            location: data.location || null,
-            mac_address: data.mac_address || null,
-            last_seen: new Date()
-          },
-          transaction
-        });
-
-        // Create main sensor reading
-        const reading = await SensorReading.create({
-          device_id: data.device_id,
-          panel_irradiance: data.panel_irradiance,
-          space_irradiance: data.space_irradiance,
-          dust_factor: data.dust_factor,
-          full_spectrum_panel: data.full_spectrum_panel,
-          full_spectrum_space: data.full_spectrum_space,
-          ir_panel: data.ir_panel,
-          ir_space: data.ir_space,
-          current: data.current,
-          voltage: data.voltage,
-          power: data.power,
-          crack_indicator: data.crack_indicator,
-          shading_variation: data.shading_variation,
-          efficiency: data.efficiency,
-          rssi: data.rssi,
-          uptime_hours: data.uptime_hours,
-          device_timestamp: data.timestamp_ms
-        }, { transaction });
-
-        // Create LDR readings if provided
-        if (data.ldr_readings && Array.isArray(data.ldr_readings)) {
-          await Promise.all(data.ldr_readings.map(ldr => 
-            LdrReading.create({
-              reading_id: reading.id,
-              position: ldr.position,
-              value: ldr.value
-            }, { transaction })
-          ));
-        }
-
-        await transaction.commit();
-
-        //trigger alert evaluation in background
-        evaluatedRules(reading).catch(err =>
-          logger.error('Alert evaluation failed:', err)
-        );
-
-        res.status(201).json({ success: true});
-        
-        logger.info(`Reading created for device ${data.device_id}`);
-
-        res.status(201).json({
-          success: true,
-          message: 'Reading created successfully',
-          data: {
+      // Create LDR readings if provided
+      if (data.ldr_readings && Array.isArray(data.ldr_readings)) {
+        await Promise.all(data.ldr_readings.map(ldr =>
+          LdrReading.create({
             reading_id: reading.id,
-            timestamp: reading.timestamp
-          }
-        });
-      } catch (error) {
-        await transaction.rollback();
-        throw error;
+            position: ldr.position,
+            value: ldr.value
+          }, { transaction })
+        ));
       }
+
+      await transaction.commit();   //success: transaction finished
+    } catch (dbError) {
+        await transaction.rollback(); // only rollback if DB operations failed
+        throw dbError;
+      }
+
+      // Post‑commit actions n not affect transaction
+      // Fire alert evaluation 
+      evaluatedRules(reading).catch(err =>
+        logger.error('Alert evaluation failed:', err)
+      );
+
+      // Send success response ONCE
+      logger.info(`Reading created for device ${data.device_id}`);
+      res.status(201).json({
+        success: true,
+        message: 'Reading created successfully',
+        data: {
+          reading_id: reading.id,
+          timestamp: reading.timestamp
+        }
+      });
+
     } catch (error) {
       next(error);
     }
   },
 
-// controllers/readingController.js - Update this method
     async getLatestReading(req, res, next) {
     try {
         const { deviceId } = req.params; // This will be undefined if no deviceId provided
