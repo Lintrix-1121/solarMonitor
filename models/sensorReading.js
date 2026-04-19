@@ -137,3 +137,5 @@ const SensorReading = sequelize.define('SensorReading', {
 });
 
 module.exports = SensorReading;
+
+

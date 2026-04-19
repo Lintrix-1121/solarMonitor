@@ -38,3 +38,5 @@ const LdrReading = sequelize.define('LdrReading', {
 });
 
 module.exports = LdrReading;
+
+

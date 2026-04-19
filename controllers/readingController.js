@@ -1,6 +1,7 @@
 const { SensorReading, LdrReading, Device } = require('../models');
 const { Op } = require('sequelize');
 const logger = require('../services/loggerService');
+const { evaluatedRules } = require('./alertController')
 
 const readingController = {
   // Create new reading (from ESP32)
@@ -65,6 +66,13 @@ const readingController = {
 
         await transaction.commit();
 
+        //trigger alert evaluation in background
+        evaluatedRules(reading).catch(err =>
+          logger.error('Alert evaluation failed:', err)
+        );
+
+        res.status(201).json({ success: true});
+        
         logger.info(`Reading created for device ${data.device_id}`);
 
         res.status(201).json({
@@ -316,3 +324,5 @@ const readingController = {
 };
 
 module.exports = readingController;
+
+
